@@ -26,32 +26,6 @@ Every step is checkpointed to Postgres, so a run can be paused (at the approval 
 
 ## Architecture
 
-```mermaid
-flowchart TD
-    START([start]) --> router[router]
-    router -->|needs_research = True| research[research]
-    router -->|needs_research = False| orchestrator[orchestrator]
-    research --> orchestrator
-    orchestrator --> plan_review{{"plan_review — human approval (interrupt)"}}
-    plan_review -->|Send() fan-out, one per section| worker
-
-    subgraph worker["worker — one instance per section, run in parallel"]
-        direction TB
-        draft[draft] --> critic[critic]
-        critic -->|failed & attempt < 2| revise[revise]
-        revise --> critic
-        critic -->|passed, or attempt cap hit| finalize[finalize]
-    end
-
-    worker -->|fan-in, all sections done| reducer
-
-    subgraph reducer["reducer"]
-        direction TB
-        merge_content[merge_content] --> decide_images[decide_images] --> generate_and_place_images[generate_and_place_images]
-    end
-
-    reducer --> END([end])
-```
 
 `worker` and `reducer` are separate compiled subgraphs. `worker` runs once per outline section — LangGraph's `Send()` fans out one parallel instance per section after `plan_review` resumes, and `worker_node` (a thin async wrapper around `worker_subgraph`) returns only `{"sections": [...]}` back to the parent graph, so the parallel branches never collide on shared state keys like `topic` or `plan`.
 
