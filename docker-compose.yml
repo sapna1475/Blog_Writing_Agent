@@ -1,0 +1,22 @@
+#Docker compose · YML
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: blog_agent_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: bloguser
+      POSTGRES_PASSWORD: blogpass
+      POSTGRES_DB: blogagent
+    ports:
+      - "5432:5432"
+    volumes:
+      - blog_agent_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bloguser -d blogagent"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+ 
+volumes:
+  blog_agent_pgdata:

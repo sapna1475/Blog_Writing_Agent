@@ -1,0 +1,39 @@
+
+# --- Core agent / graph orchestration ---
+langgraph>=1.0.0
+langchain>=0.3.7
+langchain-core>=0.3.15
+ 
+# ---LLM inference (Hugging Face Inference Providers) ---
+langchain-huggingface>=0.1.2
+huggingface_hub>=0.26.0
+ 
+# --- Web research tool ---
+langchain-community>=0.3.5
+tavily-python>=0.5.0
+ 
+# --- Optional image generation (Gemini) ---
+google-genai>=0.3.0
+ 
+# --- Persistence (Postgres checkpointer, via docker-compose) ---
+langgraph-checkpoint-postgres>=2.0.0
+psycopg[binary,pool]>=3.2.0
+ 
+# --- Observability (LangSmith tracing) ---
+langsmith>=0.1.147
+ 
+# --- Schema / config / env ---
+pydantic>=2.9.0
+pydantic-settings>=2.5.2
+python-dotenv>=1.0.1
+ 
+# --- Resilience ---
+tenacity>=8.5.0
+ 
+# --- Backend API ---
+fastapi>=0.115.0
+uvicorn[standard]>=0.31.0
+ 
+# --- Frontend ---
+streamlit>=1.38.0
+requests>=2.32.0 
