@@ -1,11 +1,33 @@
 # 📝 Blog Writer Agent
 
-An autonomous, multi-stage blog-writing agent built on **LangGraph**, served over **FastAPI**, with a **Streamlit** frontend and a **human-in-the-loop plan approval** step. Runs on a free, open-source LLM (Qwen2.5-7B via Hugging Face Inference) — no OpenAI/Anthropic key required.
+An autonomous, multi-stage blog-writing agent built on **LangGraph**, served over **FastAPI**, with a **Streamlit** frontend and a **human-in-the-loop plan approval** step. Runs on a free, open-source LLM (Qwen2.5-7B via Hugging Face Inference) — no OpenAI/Anthropic key required. Containerized with **Docker** and deployed on **AWS (ECR + ECS Fargate + Application Load Balancer)**.
 
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-async%20jobs%20%2B%20SSE-009688)
 ![LangGraph](https://img.shields.io/badge/LangGraph-stateful%20agent-6f42c1)
 ![Streamlit](https://img.shields.io/badge/Streamlit-frontend-ff4b4b)
+![Docker](https://img.shields.io/badge/Docker-containerized-2496ED)
+![AWS](https://img.shields.io/badge/AWS-ECS%20Fargate-FF9900)
+
+**Live backend health check:** <http://blog-writing-agent-lb-428148850.us-east-1.elb.amazonaws.com/health>
+*(Hosted on AWS. The demo may be taken down at any time to avoid running costs.)*
+
+---
+
+## Table of contents
+
+- [What it does](#what-it-does)
+- [Architecture](#architecture)
+- [Project structure](#project-structure)
+- [How it works, node by node](#how-it-works-node-by-node)
+- [API](#api-backendpy)
+- [Local setup](#local-setup)
+- [Usage](#usage)
+- [Docker](#docker)
+- [Deployment on AWS](#deployment-on-aws)
+- [Known limitations](#known-limitations)
+- [Future scope](#future-scope)
+- [Tech stack](#tech-stack)
 
 ---
 
@@ -26,6 +48,27 @@ Every step is checkpointed to Postgres, so a run can be paused (at the approval 
 
 ## Architecture
 
+### Agent graph
+
+```mermaid
+flowchart TD
+    START([Start]) --> router
+    router -->|needs_research| research
+    router -->|closed_book| orchestrator
+    research --> orchestrator
+    orchestrator --> plan_review{{"plan_review<br/>(human approval · interrupt)"}}
+    plan_review -->|"Send() × N sections"| worker
+    worker --> reducer
+    reducer --> END([End])
+
+    subgraph worker_subgraph [worker: one instance per section]
+        direction LR
+        draft --> critic
+        critic -->|fails, first pass| revise
+        revise --> critic
+        critic -->|passes or 2nd pass| finalize
+    end
+```
 
 `worker` and `reducer` are separate compiled subgraphs. `worker` runs once per outline section — LangGraph's `Send()` fans out one parallel instance per section after `plan_review` resumes, and `worker_node` (a thin async wrapper around `worker_subgraph`) returns only `{"sections": [...]}` back to the parent graph, so the parallel branches never collide on shared state keys like `topic` or `plan`.
 
@@ -45,7 +88,7 @@ display(Image(graph.get_graph(xray=True).draw_mermaid_png()))
   <img src="assets/main_graph.png" alt="Main graph, top-level view" width="260">
 </p>
 
-<p align="center"><em>Main graph — default (non-<code>xray</code>) view. This collapses <code>worker</code> and <code>reducer</code> into single boxes and doesn't expand the <code>plan_review</code> interrupt step; use <code>xray=True</code> (snippet above) or the Mermaid diagram further up for the full picture including human approval.</em></p>
+<p align="center"><em>Main graph — default (non-<code>xray</code>) view. This collapses <code>worker</code> and <code>reducer</code> into single boxes and doesn't expand the <code>plan_review</code> interrupt step; use <code>xray=True</code> (snippet above) or the Mermaid diagram above for the full picture including human approval.</em></p>
 
 <p align="center">
   <img src="assets/reducer_subgraph.png" alt="Reducer subgraph" width="260">
@@ -62,17 +105,43 @@ display(Image(reducer_subgraph.get_graph().draw_mermaid_png()))
 
 *(Swap in `worker_subgraph` the same way to render the draft → critic → revise → finalize loop on its own.)*
 
+### Cloud architecture (AWS)
+
+```mermaid
+flowchart LR
+    User([User / Streamlit UI]) -->|HTTP :80| ALB[Application Load Balancer<br/>blog-writing-agent-lb]
+    ALB -->|forward to target group<br/>health check: /health| ECS
+
+    subgraph AWS [AWS · us-east-1]
+        ALB
+        subgraph ECS [ECS Fargate · blog-writing-agent-cluster]
+            Task[Task: FastAPI + LangGraph<br/>container port 8000]
+        end
+        ECR[(Amazon ECR<br/>blog-writing-agent:latest)] -.->|image pull| Task
+        Task -.->|logs| CW[CloudWatch Logs]
+    end
+
+    Task -->|inference| HF[Hugging Face Inference]
+    Task -->|search| Tavily[Tavily]
+    Task -->|images| Gemini[Google Gemini]
+    Task -->|checkpoints| PG[(Postgres)]
+```
+
 ---
 
 ## Project structure
 
 ```
 .
-├── backend.py            # FastAPI + LangGraph agent (the whole pipeline)
+├── backend.py             # FastAPI + LangGraph agent (the whole pipeline)
 ├── frontend.py            # Streamlit UI — talks to backend.py over HTTP
-├── docker-compose.yml     # Postgres, for LangGraph's checkpointer
+├── Dockerfile             # Container image for the backend
+├── .dockerignore
+├── docker-compose.yml     # Postgres, for LangGraph's checkpointer (local dev)
 ├── requirements.txt
 ├── .env                   # your secrets/config (not committed)
+├── assets/                # README images (graph renders + AWS screenshots)
+│   └── aws/
 └── blog_output/           # generated markdown + images (created at runtime)
     └── images/
 ```
@@ -113,11 +182,17 @@ Small open-source models served via `HuggingFaceEndpoint` don't support OpenAI-s
 | `GET` | `/jobs/{job_id}` | Current status, pending plan (if `waiting_approval`), final markdown (if `completed`), or error. |
 | `POST` | `/jobs/{job_id}/approve` | Resume a paused job. Body: `{}` to approve as-is, or `{"plan": {...}}` to approve with edits. |
 | `GET` | `/jobs/{job_id}/stream` | Server-Sent Events stream of graph progress for the job's current run segment. |
-| `GET` | `/health` | Liveness check. |
+| `GET` | `/health` | Liveness check (also used as the ALB target-group health check). |
+
+Quick check against the deployed service:
+
+```bash
+curl http://blog-writing-agent-lb-428148850.us-east-1.elb.amazonaws.com/health
+```
 
 ---
 
-## Setup
+## Local setup
 
 ### 1. Clone & install
 
@@ -167,7 +242,7 @@ BLOG_OUTPUT_DIR=./blog_output
 | `HUGGINGFACEHUB_API_TOKEN` | — | Required. |
 | `TAVILY_API_KEY` | — | Optional — without it, `research` logs a warning and returns no evidence. |
 | `GOOGLE_API_KEY` | — | Optional — without it, image generation fails gracefully per-image (`[IMAGE GENERATION FAILED]` block), everything else still completes. |
-| `DATABASE_URL` | `postgresql://bloguser:blogpass@localhost:5432/blogagent` | Must match `docker-compose.yml`. |
+| `DATABASE_URL` | `postgresql://bloguser:blogpass@localhost:5432/blogagent` | Must match `docker-compose.yml` locally; point at a managed Postgres in the cloud. |
 | `LANGCHAIN_TRACING_V2` | `false` | Set `true` to enable LangSmith tracing. |
 | `LANGCHAIN_API_KEY` / `LANGCHAIN_PROJECT` | — / `blog-writer-agent` | Only used if tracing is enabled. |
 | `BLOG_OUTPUT_DIR` | `./blog_output` | Where final markdown + `images/` are written. Must match what you point the frontend's **Output dir** field at. |
@@ -191,7 +266,7 @@ uvicorn backend:app --reload
 streamlit run frontend.py
 ```
 
-In the sidebar, set **Backend URL** (e.g. `http://localhost:8000`) and **Output dir** to match `BLOG_OUTPUT_DIR`.
+In the sidebar, set **Backend URL** (e.g. `http://localhost:8000`, or the ALB URL below to use the deployed backend) and **Output dir** to match `BLOG_OUTPUT_DIR`.
 
 ---
 
@@ -205,6 +280,143 @@ In the sidebar, set **Backend URL** (e.g. `http://localhost:8000`) and **Output 
 
 ---
 
+## Docker
+
+Build and run the backend container locally:
+
+```bash
+# Build the image
+docker build -t blog-writing-agent .
+
+# Run it (secrets and config come from .env; never bake them into the image)
+docker run -d -p 8000:8000 --env-file .env --name blog-writing-agent blog-writing-agent
+
+# Verify
+curl http://localhost:8000/health
+```
+
+Useful commands:
+
+```bash
+docker ps                          # is it running?
+docker logs blog-writing-agent     # startup errors, request logs
+docker rm -f blog-writing-agent    # remove before re-running with the same name
+```
+
+> `.env` is listed in `.dockerignore` so secrets never end up inside the image layers.
+> If `DATABASE_URL` uses `localhost`, remember that inside a container `localhost` is the container itself — use `host.docker.internal` (Docker Desktop) or a Compose network service name instead.
+
+---
+
+## Deployment on AWS
+
+The backend is packaged as a Docker image, stored in **Amazon ECR**, run on **Amazon ECS with Fargate** (no servers to manage), and exposed to the internet through an **Application Load Balancer**.
+
+**Live health check:** <http://blog-writing-agent-lb-428148850.us-east-1.elb.amazonaws.com/health>
+
+| Component | Resource |
+|---|---|
+| Region | `us-east-1` (N. Virginia) |
+| Container registry | ECR repository `blog-writing-agent` |
+| Compute | ECS cluster `blog-writing-agent-cluster` (Fargate) |
+| Task definition | `blog-writing-agent-task` |
+| Load balancer | Application Load Balancer `blog-writing-agent-lb` (internet-facing, IPv4) |
+| Health check | `GET /health` on the target group |
+
+### Step 1 — Build the image
+
+```powershell
+docker build -t blog-writing-agent .
+```
+
+> If you build on an ARM machine (e.g. Apple Silicon), add `--platform linux/amd64` so the image matches Fargate's default x86_64 architecture.
+
+### Step 2 — Create the ECR repository
+
+```powershell
+aws ecr create-repository --repository-name blog-writing-agent --region us-east-1
+```
+
+### Step 3 — Authenticate Docker to ECR
+
+ECR is a private registry, so Docker needs a temporary token (valid for 12 hours) before it can push.
+
+PowerShell (AWS Tools for PowerShell):
+
+```powershell
+(Get-ECRLoginCommand).Password | docker login --username AWS --password-stdin <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com
+```
+
+Or with the AWS CLI:
+
+```bash
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com
+```
+
+You should see `Login Succeeded`.
+
+### Step 4 — Tag and push
+
+```powershell
+docker tag blog-writing-agent:latest <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/blog-writing-agent:latest
+docker push <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/blog-writing-agent:latest
+```
+
+Once the push completes, the image appears in the repository:
+
+![ECR repository showing the pushed blog-writing-agent image tagged latest](assets/aws/ecr-repository.png)
+
+### Step 5 — Create the ECS cluster, task definition, and service
+
+1. **Cluster:** create an ECS cluster (`blog-writing-agent-cluster`) using **AWS Fargate**.
+2. **Task definition** (`blog-writing-agent-task`):
+   - Launch type: Fargate, Linux/X86_64
+   - Container image: the ECR URI from step 4
+   - Container port: `8000` (TCP)
+   - CPU / memory: size for your workload (the agent is I/O-bound on external APIs, so a small task is fine)
+   - Environment variables: `HF_REPO_ID`, `HF_PROVIDER`, `BLOG_OUTPUT_DIR`, etc.
+   - **Secrets** (`HUGGINGFACEHUB_API_TOKEN`, `TAVILY_API_KEY`, `GOOGLE_API_KEY`, `DATABASE_URL`, `LANGCHAIN_API_KEY`): inject from **AWS Secrets Manager** or **SSM Parameter Store** using the task definition's `secrets` field rather than plain-text environment variables.
+   - Logging: `awslogs` driver → CloudWatch Logs
+3. **Service:** create a service from the task definition with a desired count of `1`, attached to the load balancer below.
+
+### Step 6 — Put an Application Load Balancer in front
+
+1. Create an **internet-facing Application Load Balancer** (`blog-writing-agent-lb`) across the VPC's public subnets, with a listener on port `80`.
+2. Create a **target group** (target type `IP` for Fargate) on port `8000` with health check path `/health`.
+3. Security groups:
+   - **ALB SG:** allow inbound `80` from `0.0.0.0/0`.
+   - **Task SG:** allow inbound `8000` **only from the ALB's security group**.
+
+![Application Load Balancer details showing Active status and DNS name](assets/aws/alb-details.png)
+
+### Step 7 — Verify
+
+The ECS service reports `Active` with the desired task running and a successful deployment, and the load balancer's target health is passing:
+
+![ECS service overview showing Active status, 1 running task, and successful deployment](assets/aws/ecs-service.png)
+
+```bash
+curl http://blog-writing-agent-lb-428148850.us-east-1.elb.amazonaws.com/health
+```
+
+### Updating the deployment
+
+After changing code, rebuild, push, and roll the service:
+
+```powershell
+docker build -t blog-writing-agent .
+docker tag blog-writing-agent:latest <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/blog-writing-agent:latest
+docker push <ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/blog-writing-agent:latest
+
+aws ecs update-service --cluster blog-writing-agent-cluster --service <SERVICE_NAME> --force-new-deployment --region us-east-1
+```
+
+### Cost and cleanup
+
+Fargate tasks and ALBs bill by the hour even when idle. To stop charges, delete the ECS service, the load balancer, the target group, and (optionally) the ECR images and CloudWatch log group.
+
+---
+
 ## Known limitations
 
 - **In-memory job registry.** `JOBS: Dict[str, JobRecord]` lives in process memory — jobs don't survive a backend restart (though the *graph's own* state does, via the Postgres checkpointer). Swap in Redis for production.
@@ -213,7 +425,8 @@ In the sidebar, set **Backend URL** (e.g. `http://localhost:8000`) and **Output 
 - **Free-tier HF inference can be slow**, especially on cold starts, and small models sometimes need several structured-output repair attempts — a run can take a few minutes.
 - **The image-decision LLM call tends to under-request images.** A deterministic fallback inserts one default diagram for `system_design` / `tutorial` / `comparison` posts if the model returns zero.
 - **Single revision pass, hard-capped.** `route_after_critic` allows exactly one revise → critic loop per section, to bound cost/latency — a section can still finish "failed" if the second attempt doesn't pass.
-- **No auth, no rate limiting.** The FastAPI app is wide open — fine for local/demo use, not for a public deployment.
+- **No auth, no rate limiting.** The FastAPI app is wide open, and the AWS deployment is reachable over plain HTTP from the public internet. Anyone with the URL can trigger jobs that consume your Hugging Face, Tavily, and Gemini quotas. Fine for a demo; add authentication, HTTPS (ACM certificate + port 443 listener), and rate limiting before real use.
+- **Generated files live on the container's ephemeral disk.** On Fargate, `blog_output/` is lost when a task restarts. Mount EFS or write to S3 for durable output.
 - **No automated tests.** The graph is validated interactively rather than via a test suite.
 
 ---
@@ -228,6 +441,8 @@ In the sidebar, set **Backend URL** (e.g. `http://localhost:8000`) and **Output 
 - **Image editing / retry controls.** Surface a "regenerate this image" action in the frontend, and expose the failure reason inline instead of only in the markdown as `[IMAGE GENERATION FAILED]`.
 - **Auth + per-user job isolation**, for anything beyond local/demo use.
 - **Concurrency controls.** Queue or rate-limit concurrent jobs against the free HF inference tier to avoid throttling/slow-downs under load.
+- **Production AWS hardening.** HTTPS via ACM, private subnets with NAT, EFS/S3 for output, RDS for Postgres, autoscaling, and Infrastructure as Code (Terraform/CDK).
+- **CI/CD.** GitHub Actions workflow to build, push to ECR, and force a new ECS deployment on every merge to `main`.
 - **Export integrations.** Publish directly to a CMS (e.g. WordPress, Ghost, Notion) or export to PDF/DOCX in addition to Markdown.
 - **Automated tests.** Unit tests for `critique_section`/`verify_and_strip_citations`, and an integration test that runs the graph end-to-end against a mocked LLM.
 
@@ -240,10 +455,12 @@ In the sidebar, set **Backend URL** (e.g. `http://localhost:8000`) and **Output 
 - **Research:** Tavily (`langchain-community`)
 - **Images:** Google Gemini (`google-genai`)
 - **API:** FastAPI, async jobs, Server-Sent Events
-- **Persistence:** Postgres (via Docker Compose)
+- **Persistence:** Postgres (Docker Compose locally)
 - **Frontend:** Streamlit
+- **Containerization:** Docker
+- **Cloud:** AWS — ECR, ECS Fargate, Application Load Balancer, CloudWatch Logs
 - **Validation/resilience:** Pydantic, `pydantic-settings`, Tenacity (retry/backoff)
-- **Observability:** LangSmith 
+- **Observability:** LangSmith
 
 ---
 

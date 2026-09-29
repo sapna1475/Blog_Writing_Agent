@@ -1,0 +1,12 @@
+.env
+.git
+.gitignore
+venv/
+__pycache__/
+*.pyc
+blog_output/
+assets/
+frontend.py
+docker-compose.yml
+README.md
+.vscode/

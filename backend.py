@@ -4,7 +4,7 @@ backend.py — Blog Writer Agent
 
   1. Settings & setup (env vars, logging, LangSmith tracing)
   2. Resilience helper (retry/backoff for LLM calls)
-  3. LLM client (free Hugging Face model)
+  3. LLM client ( Hugging Face model)
   4. Schemas (Task, Plan, Evidence, Critique, Images...)
   5. Citation-grounding verification helper
   6. Graph nodes: router -> research -> orchestrator -> plan_review (human
