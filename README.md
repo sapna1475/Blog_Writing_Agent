@@ -129,6 +129,31 @@ flowchart LR
 
 ---
 
+### Agent graph
+
+```mermaid
+flowchart TD
+    START([Start]) --> router
+    router -->|needs_research| research
+    router -->|closed_book| orchestrator
+    research --> orchestrator
+    orchestrator --> plan_review{{"plan_review<br/>(human approval · interrupt)"}}
+    plan_review -->|"Send() × N sections"| worker
+    worker --> reducer
+    reducer --> END([End])
+
+    subgraph worker_subgraph [worker: one instance per section]
+        direction LR
+        draft --> critic
+        critic -->|fails, first pass| revise
+        revise --> critic
+        critic -->|passes or 2nd pass| finalize
+    end
+```
+
+`worker` and `reducer` are separate compiled subgraphs. `worker` runs once per outline section — LangGraph's `Send()` fans out one parallel instance per section after `plan_review` resumes, and `worker_node` (a thin async wrapper around `worker_subgraph`) returns only `{"sections": [...]}` back to the parent graph, so the parallel branches never collide on shared state keys like `topic` or `plan`.
+
+
 ## Project structure
 
 ```
