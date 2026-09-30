@@ -17,7 +17,6 @@ An autonomous, multi-stage blog-writing agent built on **LangGraph**, served ove
 ## Table of contents
 
 - [What it does](#what-it-does)
-- [Architecture](#architecture)
 - [Project structure](#project-structure)
 - [How it works, node by node](#how-it-works-node-by-node)
 - [API](#api-backendpy)
@@ -46,6 +45,7 @@ Every step is checkpointed to Postgres, so a run can be paused (at the approval 
 
 ---
 
+<<<<<<< HEAD
 ## Architecture
 
 ### Agent graph
@@ -154,6 +154,8 @@ flowchart TD
 `worker` and `reducer` are separate compiled subgraphs. `worker` runs once per outline section — LangGraph's `Send()` fans out one parallel instance per section after `plan_review` resumes, and `worker_node` (a thin async wrapper around `worker_subgraph`) returns only `{"sections": [...]}` back to the parent graph, so the parallel branches never collide on shared state keys like `topic` or `plan`.
 
 
+=======
+>>>>>>> f0f8a0e5 (Added Deployment link)
 ## Project structure
 
 ```
@@ -165,7 +167,7 @@ flowchart TD
 ├── docker-compose.yml     # Postgres, for LangGraph's checkpointer (local dev)
 ├── requirements.txt
 ├── .env                   # your secrets/config (not committed)
-├── assets/                # README images (graph renders + AWS screenshots)
+├── assets/                # README images (AWS deployment diagram + screenshots)
 │   └── aws/
 └── blog_output/           # generated markdown + images (created at runtime)
     └── images/
@@ -338,6 +340,8 @@ docker rm -f blog-writing-agent    # remove before re-running with the same name
 The backend is packaged as a Docker image, stored in **Amazon ECR**, run on **Amazon ECS with Fargate** (no servers to manage), and exposed to the internet through an **Application Load Balancer**.
 
 **Live health check:** <http://blog-writing-agent-lb-428148850.us-east-1.elb.amazonaws.com/health>
+
+![AWS deployment overview: Docker image pushed to ECR, run on ECS Fargate behind an Application Load Balancer](assets/aws/deployment-overview.svg)
 
 | Component | Resource |
 |---|---|
