@@ -1,6 +1,6 @@
 # 📝 Blog Writer Agent
 
-An autonomous, multi-stage blog-writing agent built on **LangGraph**, served over **FastAPI**, with a **Streamlit** frontend and a **human-in-the-loop plan approval** step. Runs on a free, open-source LLM (Qwen2.5-7B via Hugging Face Inference) — no OpenAI/Anthropic key required. Containerized with **Docker** and deployed on **AWS (ECR + ECS Fargate + Application Load Balancer)**.
+An autonomous, multi-stage blog-writing agent built on **LangGraph**, served over **FastAPI**, with a **Streamlit** frontend and a **human-in-the-loop plan approval** step. Containerized with **Docker** and deployed on **AWS (ECR + ECS Fargate + Application Load Balancer)**.
 
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-async%20jobs%20%2B%20SSE-009688)
