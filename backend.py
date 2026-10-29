@@ -66,7 +66,7 @@ logger = logging.getLogger("blog_agent")
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # LLM (free Hugging Face inference)
+    # LLM (Hugging Face inference)
     hf_repo_id: str = "Qwen/Qwen2.5-7B-Instruct"
     hf_provider: str = "featherless-ai"
     hf_max_new_tokens: int = 1536
