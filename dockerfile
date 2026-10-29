@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Non-root user (security best practice, and a good interview talking point)
+# Non-root user (security best practice)
 RUN useradd --create-home --uid 1000 appuser
 
 # Install dependencies first so Docker caches this layer
